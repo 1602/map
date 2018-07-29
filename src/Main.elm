@@ -13,6 +13,7 @@ import Time exposing (Time, minute)
 import Task
 import Http
 import Svg
+import Svg.Events
 import Svg.Attributes exposing (x, y, rx, ry, width, height, viewBox, style, cx, cy, r, transform)
 
 
@@ -20,11 +21,12 @@ import Svg.Attributes exposing (x, y, rx, ry, width, height, viewBox, style, cx,
 
 
 type alias Model =
-    { location : Maybe Location
-    , error : Maybe Error
+    { error : Maybe Error
     , watchLocation : Bool
     , lastLocation : Maybe PathPoint
     , visitedLocations : List VisitedLocation
+    , squareSize : Float
+    , ratio : Float
     , loading : Bool
     , touch : Maybe Touch
     , baseOffset : ( Float, Float )
@@ -34,25 +36,32 @@ type alias Model =
     , path : List PathPoint
     , time : Time
     , selectedPath : Maybe Time
+    , mapOffset : ( Float, Float )
+    , nextMapOffset : ( Float, Float )
+    , mapUrl : String
     }
 
 
 init : ( Model, Cmd Msg )
 init =
-    { location = Nothing
-    , error = Nothing
+    { error = Nothing
     , watchLocation = False
     , lastLocation = Nothing
     , visitedLocations = []
+    , squareSize = 200
+    , ratio = 1.6
     , loading = True
     , touch = Nothing
     , baseOffset = ( 0.0, 0.0 )
     , horizontalOffset = 0.0
     , verticalOffset = 0.0
-    , zoomLevel = 12.65
+    , zoomLevel = 4
     , path = []
     , time = 0
     , selectedPath = Nothing
+    , mapOffset = ( 0, 0 )
+    , nextMapOffset = ( 0, 0 )
+    , mapUrl = ""
     }
         ! [ Request.Location.list 8 Nothing
                 |> Http.send VisitedLocations
@@ -76,8 +85,9 @@ type Msg
     | ZoomIn
     | ZoomOut
     | SelectPath
-    | VisitedLocations (Result Http.Error ( List VisitedLocation, PathPoint ))
+    | VisitedLocations (Result Http.Error ( List VisitedLocation, PathPoint, Float, Float ))
     | Path (Result Http.Error (List PathPoint))
+    | AdjustOffset
 
 
 newCenter : Model -> Maybe ( Float, Float )
@@ -114,6 +124,9 @@ update msg model =
         CurrentTime t ->
             { model | time = t } ! []
 
+        AdjustOffset ->
+            { model | mapOffset = model.nextMapOffset } ! []
+
         Path res ->
             res
                 |> Result.withDefault []
@@ -122,8 +135,33 @@ update msg model =
         VisitedLocations res ->
             res
                 |> Result.mapError (toString >> Debug.log)
-                |> Result.withDefault ( [], PathPoint 0 0 0 )
-                |> (\( list, pp ) -> { model | loading = False, visitedLocations = list, lastLocation = Just pp } ! [])
+                |> Result.withDefault ( [], PathPoint 0 0 0, 200, 1.6 )
+                |> (\( list, pp, ss, ratio ) ->
+                        { model
+                            | loading = False
+                            , visitedLocations = list
+                            , lastLocation = Just pp
+                            , squareSize = ss
+                            , ratio = ratio
+                            , nextMapOffset = ( model.verticalOffset, model.horizontalOffset )
+                            , mapUrl =
+                                "http://open.mapquestapi.com/staticmap/v5/map?key=ynpLd2go7xU9XrwAYFuhtQxubF83RFgA&size=580,580&type=light&zoom=15&center="
+                                    ++ (toString <| pp.lat + model.verticalOffset * model.zoomLevel * 0.105)
+                                    ++ ","
+                                    ++ (toString <| pp.long + model.horizontalOffset * model.zoomLevel * 0.17)
+                                {-
+                                   "https://maps.googleapis.com/maps/api/staticmap?center="
+                                       ++ (toString <| pp.lat + model.verticalOffset * model.zoomLevel * 0.02)
+                                       ++ ","
+                                       ++ (toString <| pp.long + model.horizontalOffset * model.zoomLevel * 0.02)
+                                       ++ "&style=feature:road.local|element:geometry.fill|visibility:on|weight:2|color:white"
+                                       ++ "&zoom=15&size=580x580&scale=2"
+                                       ++ "&geodesic=true"
+                                       ++ "&key=AIzaSyCEImk9Kxih0sOYMDVu0QEZ7f5shXSWDaE"
+                                -}
+                        }
+                            ! []
+                   )
 
         {-
            Move dir ->
@@ -305,12 +343,12 @@ view model =
     else
         div
             [ Html.Attributes.style
-                [ ( "width", "100%" )
-                , ( "height", "100%" )
+                [ ( "width", "580px" )
+                , ( "height", "580px" )
                 , ( "overflow", "hidden" )
                 ]
             ]
-            [ renderVistedLocations model.zoomLevel model.horizontalOffset model.verticalOffset model.lastLocation model.visitedLocations model.path
+            [ renderVistedLocations model
             , controls
               -- text "Location service is not available"
               -- , div [] [ model.touch |> toString |> text ]
@@ -384,63 +422,125 @@ ontouch eventName =
         )
 
 
-renderVistedLocations : Float -> Float -> Float -> Maybe PathPoint -> List VisitedLocation -> List PathPoint -> Html Msg
-renderVistedLocations zoomLevel horizontalOffset verticalOffset loc visitedLocations path =
-    case loc of
-        Nothing ->
-            text ""
+renderVistedLocations : Model -> Html Msg
+renderVistedLocations model =
+    let
+        zoomLevel =
+            model.zoomLevel
 
-        Just location ->
-            let
-                centerA =
-                    location.long + horizontalOffset
+        horizontalOffset =
+            model.horizontalOffset
 
-                centerB =
-                    location.lat * 1.61 + verticalOffset
-            in
-                div
-                    [ ontouch "start"
-                    , ontouch "move"
-                    , ontouch "end"
-                    , Html.Attributes.style
-                        [ ( "width", "100%" )
-                        , ( "position", "relative" )
-                        , ( "height", "100%" )
-                        ]
-                    ]
-                    [ Svg.svg
-                        [ [ centerA + (-4.0 * zoomLevel / 2000) |> toString
-                          , centerB + (-4.0 * zoomLevel / 2000) |> toString
-                          , 0.005 * zoomLevel |> toString
-                          , 0.005 * zoomLevel |> toString
-                          ]
-                            |> String.join " "
-                            |> viewBox
-                        , transform "scale(1, -1)"
-                        , style "background: #000000; height: 100%; width: 100%; opacity: 1; position: absolute; left: 0; top: 0"
-                        ]
-                        (List.concat
-                            [ visitedLocations
-                                |> printVisitedSquares
-                            , printPath path
-                            , printCircle location
+        verticalOffset =
+            model.verticalOffset
+
+        visitedLocations =
+            model.visitedLocations
+
+        loc =
+            model.lastLocation
+
+        path =
+            model.path
+
+        squareSize =
+            model.squareSize * 10
+    in
+        case loc of
+            Nothing ->
+                text ""
+
+            Just location ->
+                let
+                    centerA =
+                        location.long
+
+                    centerB =
+                        location.lat * model.ratio
+
+                    viewBoxA =
+                        centerA * squareSize + (-5.1 * zoomLevel)
+
+                    viewBoxB =
+                        centerB * squareSize + (5.1 * zoomLevel) |> negate
+
+                    viewBoxSize =
+                        0.005 * squareSize * zoomLevel |> toString
+                in
+                    div
+                        [ ontouch "start"
+                        , ontouch "move"
+                        , ontouch "end"
+                        , Html.Attributes.style
+                            [ ( "width", "580px" )
+                            , ( "position", "relative" )
+                            , ( "height", "580px" )
                             ]
-                        )
-                    , showMap
-                        { lat = 51.5443344, long = 0.6555675, time = 0 }
-                      --location
-                    ]
+                        ]
+                        [ Svg.svg
+                            [ [ viewBoxA + horizontalOffset * squareSize |> toString
+                              , viewBoxB - verticalOffset * squareSize |> toString
+                              , viewBoxSize
+                              , viewBoxSize
+                              ]
+                                |> String.join " "
+                                |> viewBox
+                              -- , transform "scale(1, -1)"
+                            , style "background: #000000; height: 580px; width: 580px; opacity: 1; position: absolute; left: 0; top: 0"
+                            ]
+                            (List.concat
+                                [ [-- mapImage model.mapUrl model.mapOffset model.nextMapOffset squareSize viewBoxA viewBoxB viewBoxSize
+                                  ]
+                                , visitedLocations
+                                    |> printVisitedSquares squareSize location
+                                , [ visitedLocations
+                                        |> makeMask squareSize location
+                                  ]
+                                , printPath path model.squareSize
+                                , printCircle model.ratio location
+                                ]
+                            )
+                          --, showMap location model.squareSize ratio
+                        ]
 
 
-printPath : List PathPoint -> List (Svg.Svg Msg)
-printPath p =
+mapImage : String -> ( Float, Float ) -> ( Float, Float ) -> Float -> Float -> Float -> String -> Svg.Svg Msg
+mapImage mapUrl mapOffset nextMapOffset squareSize x y size =
+    let
+        ( verOff, horOff ) =
+            mapOffset
+    in
+        Svg.image
+            ([ Svg.Attributes.id "map"
+             , Svg.Attributes.xlinkHref <| mapUrl
+             , x + horOff * squareSize |> toString |> Svg.Attributes.x
+             , y - verOff * squareSize |> toString |> Svg.Attributes.y
+             , size |> Svg.Attributes.width
+             , size |> Svg.Attributes.height
+             , Svg.Attributes.style "mask: url(#mask)"
+             ]
+                ++ (if mapOffset /= nextMapOffset then
+                        [ Svg.Events.onLoad AdjustOffset ]
+                    else
+                        []
+                   )
+            )
+            []
+
+
+
+-- ++ "&maptype=hybrid"
+
+
+printPath : List PathPoint -> Float -> List (Svg.Svg Msg)
+printPath p squareSize =
     let
         path =
             p
                 |> List.map
                     (\l ->
-                        ( l.lat |> round 2000
-                        , l.long |> round 2000
+                        ( l.lat |> round (squareSize * 10) |> (*) (squareSize * -10)
+                        , l.long |> round (squareSize * 10) |> (*) (squareSize * 10)
                         )
                     )
                 |> List.foldl
@@ -471,7 +571,7 @@ printPath p =
                         Svg.circle
                             [ lat |> toString |> cy
                             , long |> toString |> cx
-                            , r "0.00013"
+                            , r "0.13"
                             , Svg.Attributes.class "path-point"
                             ]
                             []
@@ -488,7 +588,7 @@ printPath p =
                             ++ " "
                             ++ (tail |> List.map (pathPoint "L") |> String.join " ")
                     , Svg.Attributes.fill "transparent"
-                    , Svg.Attributes.strokeWidth "0.0001"
+                    , Svg.Attributes.strokeWidth "0.05"
                     , Svg.Attributes.class "path-line"
                       --, Svg.Attributes.strokeOpacity "0.6"
                     ]
@@ -506,18 +606,15 @@ round squareSize a =
         |> (\a -> a / squareSize)
 
 
-printVisitedSquares : List VisitedLocation -> List (Svg.Svg Msg)
-printVisitedSquares locations =
+makeMask : Float -> PathPoint -> List VisitedLocation -> Svg.Svg Msg
+makeMask squareSize location locations =
     let
-        squareSize =
-            200
-
         approximate locations =
             locations
                 |> List.map
                     (\l ->
-                        ( l.lat |> round squareSize
-                        , l.long |> round squareSize
+                        ( l.lat |> round (squareSize / 10)
+                        , l.long |> round (squareSize / 10)
                         )
                     )
                 |> List.foldl
@@ -539,52 +636,167 @@ printVisitedSquares locations =
         locations
             |> List.map
                 (\vl ->
-                    Svg.rect
-                        [ (toFloat vl.a / 200) - 0.0002 |> toString |> y
-                        , (toFloat vl.b / 200) - 0.0002 |> toString |> x
-                        , rx "0.0001"
-                        , ry "0.0001"
-                        , width "0.0049"
-                        , height "0.0049"
-                        , style
-                            ("fill:#00FFFF;fill-opacity:"
-                                ++ (if List.length vl.dots < 7 then
-                                        "0.1"
-                                    else if List.length vl.dots < 30 then
-                                        "0.2"
-                                    else
-                                        "0.3"
-                                   )
-                            )
+                    let
+                        squareId =
+                            "cp" ++ (toString vl.a) ++ ":" ++ (toString vl.b)
+                    in
+                        [ Svg.rect
+                            [ x "-0.5"
+                            , y "-0.5"
+                              --, rx "0.2"
+                              --, ry "0.2"
+                            , width "9.9"
+                            , height "9.9"
+                            , style
+                                ("stroke-width:0.0;stroke-opacity:0.15;fill:#00FFFF;fill-opacity:"
+                                    ++ (if List.length vl.dots < 7 then
+                                            "0.6"
+                                        else if List.length vl.dots < 30 then
+                                            "0.7"
+                                        else
+                                            "0.8"
+                                       )
+                                )
+                            ]
+                            []
                         ]
-                        []
+                            |> Svg.g
+                                [ Svg.Attributes.transform <|
+                                    "translate("
+                                        ++ ((toFloat vl.b) |> (*) 10 |> toString)
+                                        ++ ","
+                                        ++ ((toFloat vl.a) |> (*) 10 |> (+) 9.0 |> negate |> toString)
+                                        ++ ")"
+                                ]
+                )
+            |> Svg.mask [ Svg.Attributes.id "mask" ]
+
+
+printVisitedSquares : Float -> PathPoint -> List VisitedLocation -> List (Svg.Svg Msg)
+printVisitedSquares squareSize location locations =
+    let
+        approximate locations =
+            locations
+                |> List.map
+                    (\l ->
+                        ( l.lat |> round (squareSize / 10)
+                        , l.long |> round (squareSize / 10)
+                        )
+                    )
+                |> List.foldl
+                    (\coords ->
+                        Dict.update coords
+                            (\visits ->
+                                case visits of
+                                    Just n ->
+                                        n + 1 |> Just
+
+                                    Nothing ->
+                                        1 |> Just
+                            )
+                    )
+                    Dict.empty
+                |> Dict.toList
+                |> List.map (\( ( a, b ), c ) -> { lat = a, long = b, visits = c })
+    in
+        locations
+            |> List.map
+                (\vl ->
+                    let
+                        squareId =
+                            "cp" ++ (toString vl.a) ++ ":" ++ (toString vl.b)
+                    in
+                        vl.dots
+                            |> List.map
+                                (\dot ->
+                                    Svg.circle
+                                        [ 9 - dot.a |> toString |> cy
+                                        , dot.b |> toString |> cx
+                                        , if dot.s == 3 then
+                                            r "0.27"
+                                          else if dot.s == 2 then
+                                            r "0.2"
+                                          else
+                                            r "0.12"
+                                        , style <|
+                                            --"fill:#99FFFF;"
+                                            "fill:#ffeb3b;"
+                                                ++ "fill-opacity:1"
+                                          {-
+                                             ++ (if dot.s == 3 then
+                                                     "1"
+                                                 else if dot.s == 1 then
+                                                     "0.4"
+                                                 else
+                                                     "0.7"
+                                                )
+                                          -}
+                                        ]
+                                        []
+                                )
+                            |> (::)
+                                (Svg.rect
+                                    [ x "-0.5"
+                                    , y "-0.5"
+                                      --, rx "0.2"
+                                      --, ry "0.2"
+                                    , width "9.9"
+                                    , height "9.9"
+                                    , style
+                                        ("stroke-width:0.0;stroke-opacity:0.15;stroke:cyan;fill:#00FFFF;fill-opacity:"
+                                            ++ (if List.length vl.dots < 7 then
+                                                    "0.1"
+                                                else if List.length vl.dots < 30 then
+                                                    "0.2"
+                                                else
+                                                    "0.3"
+                                               )
+                                        )
+                                    ]
+                                    []
+                                )
+                            |> Svg.g
+                                [ Svg.Attributes.transform <|
+                                    "translate("
+                                        ++ ((toFloat vl.b) |> (*) 10 |> toString)
+                                        ++ ","
+                                        ++ ((toFloat vl.a) |> (*) 10 |> (+) 9.0 |> negate |> toString)
+                                        ++ ")"
+                                ]
                 )
 
 
-printCircle : PathPoint -> List (Svg.Svg Msg)
-printCircle location =
-    [ Svg.circle
-        [ location.lat |> toString |> cy
-        , location.long |> toString |> cx
-        , r "0.00018"
-        , style "fill:white;fill-opacity:0.3;"
+printCircle : Float -> PathPoint -> List (Svg.Svg Msg)
+printCircle ratio location =
+    let
+        lat =
+            location.lat * ratio * -2000
+
+        long =
+            location.long * 2000
+    in
+        [ Svg.circle
+            [ lat |> toString |> cy
+            , long |> toString |> cx
+            , r "1.8"
+            , style "fill:white;fill-opacity:0.3;"
+            ]
+            []
+        , Svg.circle
+            [ lat |> toString |> cy
+            , long |> toString |> cx
+            , r "0.7"
+            , style "fill:white;fill-opacity:1;"
+            ]
+            []
+        , Svg.circle
+            [ lat |> toString |> cy
+            , long |> toString |> cx
+            , r "0.5"
+            , style "fill:black;fill-opacity:1;"
+            ]
+            []
         ]
-        []
-    , Svg.circle
-        [ location.lat |> toString |> cy
-        , location.long |> toString |> cx
-        , r "0.00007"
-        , style "fill:white;fill-opacity:1;"
-        ]
-        []
-    , Svg.circle
-        [ location.lat |> toString |> cy
-        , location.long |> toString |> cx
-        , r "0.00005"
-        , style "fill:black;fill-opacity:1;"
-        ]
-        []
-    ]
 
 
 printVisitedLocation : Float -> Float -> Float -> Svg.Svg Msg
@@ -648,8 +860,8 @@ printVisitedLocation lat long visits =
 -}
 
 
-showMap : PathPoint -> Html Msg
-showMap location =
+showMap : PathPoint -> Float -> Float -> Html Msg
+showMap location squareSize ratio =
     let
         lat =
             toString location.lat
@@ -678,7 +890,7 @@ showMap location =
                     ++ lat
                     ++ ","
                     ++ long
-                    ++ "&style=feature:road.local|element:geometry.fill|visibility:on|weight:2|color:yellow"
+                    ++ "&style=feature:road.local|element:geometry.fill|visibility:on|weight:2|color:black"
                     -- ++ "&maptype=hybrid"
                     ++
                         "&zoom=14&size=580x580&scale=2"
@@ -705,6 +917,7 @@ showMap location =
                     ++ "&key=AIzaSyCEImk9Kxih0sOYMDVu0QEZ7f5shXSWDaE"
             , Html.Attributes.width 580
             , Html.Attributes.height 580
+            , Html.Attributes.style [ ( "top", "-22px" ), ( "left", "0" ), ( "position", "absolute" ), ( "opacity", "0.3" ) ]
             ]
             []
 

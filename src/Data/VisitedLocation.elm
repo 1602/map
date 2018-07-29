@@ -50,7 +50,7 @@ deflate num =
     List.repeat 10 0
         |> List.foldl
             (\i ( res, n ) ->
-                ( (7 |> Bitwise.and n) :: res, n |> Bitwise.shiftRightBy 3 )
+                ( (7 |> Bitwise.and n) :: res, n |> Bitwise.shiftRightZfBy 3 )
             )
             ( [], num )
         |> (\( x, _ ) -> x)

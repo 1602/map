@@ -9,11 +9,8 @@ import Json.Decode as Decode exposing (Decoder)
 
 apiServer : String
 apiServer =
-    "http://localhost:3001"
-
-
-
---"https://gentle-street.glitch.me"
+    --"http://localhost:3001"
+    "https://gentle-street.glitch.me"
 
 
 path : Maybe Float -> Request (List PathPoint)
@@ -33,7 +30,7 @@ path time =
         |> toRequest
 
 
-list : Float -> Maybe ( Float, Float ) -> Request ( List VisitedLocation, PathPoint )
+list : Float -> Maybe ( Float, Float ) -> Request ( List VisitedLocation, PathPoint, Float, Float )
 list zoomLevel center =
     apiServer
         ++ "/squares"
@@ -47,9 +44,11 @@ list zoomLevel center =
            )
         |> get
         |> withExpect
-            (Decode.map2 (,)
+            (Decode.map4 (\a b c d -> ( a, b, c, d ))
                 (Decode.field "squares" (Decode.list VisitedLocation.decoder))
                 (Decode.field "lastLocation" PathPoint.decoder)
+                (Decode.field "squareSize" Decode.float)
+                (Decode.field "ratio" Decode.float)
                 |> Http.expectJson
             )
         |> toRequest

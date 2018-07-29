@@ -8,8 +8,8 @@ body {
 }
 
 #root {
-    width: 100%;
-    height: 100%;
+    width: 580px;
+    height: 580px;
 }
 
 h1 {
@@ -42,7 +42,7 @@ img {
 }
 
 :root {
-    --color-path: #2196f3;
+    --color-path: #42f321;
 }
 
 .path-point {
@@ -51,4 +51,5 @@ img {
 
 .path-line {
     stroke: var(--color-path);
+    stroke-width: 0.16;
 }
