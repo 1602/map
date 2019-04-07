@@ -1,9 +1,9 @@
 module Request.Location exposing (list, path)
 
-import HttpBuilder exposing (post, get, withJsonBody, withExpect, toRequest)
-import Http exposing (Request, Error)
 import Data.PathPoint as PathPoint exposing (PathPoint)
 import Data.VisitedLocation as VisitedLocation exposing (VisitedLocation)
+import Http exposing (Error, Request)
+import HttpBuilder exposing (get, post, toRequest, withExpect, withJsonBody)
 import Json.Decode as Decode exposing (Decoder)
 
 
@@ -20,7 +20,7 @@ path time =
         |> (\url ->
                 case time of
                     Just t ->
-                        url ++ "?time=" ++ (toString t)
+                        url ++ "?time=" ++ (t |> String.fromFloat)
 
                     Nothing ->
                         url
@@ -30,21 +30,21 @@ path time =
         |> toRequest
 
 
-list : Float -> Maybe ( Float, Float ) -> Request ( List VisitedLocation, PathPoint, Float, Float )
+list : Float -> Maybe ( Float, Float ) -> Request ( List VisitedLocation, ( PathPoint, Float, Float ) )
 list zoomLevel center =
     apiServer
         ++ "/squares"
         |> (\url ->
                 case center of
                     Just ( lat, long ) ->
-                        url ++ "?lat=" ++ (toString lat) ++ "&long=" ++ (toString long) ++ "&zoom=" ++ (zoomLevel |> toString)
+                        url ++ "?lat=" ++ String.fromFloat lat ++ "&long=" ++ String.fromFloat long ++ "&zoom=" ++ (zoomLevel |> String.fromFloat)
 
                     Nothing ->
-                        url ++ "?zoom=" ++ (zoomLevel |> toString)
+                        url ++ "?zoom=" ++ (zoomLevel |> String.fromFloat)
            )
         |> get
         |> withExpect
-            (Decode.map4 (\a b c d -> ( a, b, c, d ))
+            (Decode.map4 (\a b c d -> ( a, ( b, c, d ) ))
                 (Decode.field "squares" (Decode.list VisitedLocation.decoder))
                 (Decode.field "lastLocation" PathPoint.decoder)
                 (Decode.field "squareSize" Decode.float)
